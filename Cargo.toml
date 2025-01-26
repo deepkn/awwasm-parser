@@ -1,0 +1,16 @@
+[package]
+name = "awwasm-parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = {version="1.0.71", default-features=false}     # Crate for easy error handling
+nom = {version="7.1.3", default-features=false}
+nom-derive = {version="0.10.1", default-features=false}         # Parser combinator
+nom-leb128 = {version="0.2.0", default-features=false}  # For decoding LEB128 variable length code compressed numbers Crate
+num-derive = {version="0.4.0", default-features=false}  # Crate that makes converting numeric types convenient
+num-traits = {version="0.2.15", default-features=false} # Crate that makes converting numeric types convenient
+
+[dev-dependencies]
+wat = "=1.0.67"             # Crate for compiling Wasm binaries from WAT
+pretty_assertions = "1.4.0" # Crate that makes it easier to see differences during testing

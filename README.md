@@ -1,2 +1,2 @@
 # awwasm-parser
-A WASM parser for the AwWasm runtime. This is a fork of [wasmparser](https://github.com/bytecodealliance/wasm-tools/tree/main/crates/wasmparser) from Wasmtime runtime, with `no_std` support added and more features to support AwWasm runtime.
+A WASM parser for the AwWasm runtime. This is built from ground up using the [nom](https://github.com/rust-bakery/nom) parser combinator library and will remain `no_std` compatible.
