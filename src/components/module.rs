@@ -76,7 +76,7 @@ impl AwwasmModule<'_> {
 }
 
 impl<'a> AwwasmModule<'a> {
-    pub fn resolve_all_sections(&'a mut self) -> anyhow::Result<()> {
+    pub fn resolve_all_sections(&mut self) -> anyhow::Result<()> {
         self.sections.as_mut().unwrap().iter_mut().for_each(|sec| { 
             let items = sec.resolve().map_err(|e| anyhow::anyhow!("Failed to parse WASM module: {}", e));
             match items.unwrap() {
@@ -94,7 +94,7 @@ impl<'a> AwwasmModule<'a> {
 mod tests {
     use crate::components::module::{AwwasmModule, AwwasmModulePreamble};
     use crate::components::section::{AwwasmSection, AwwasmSectionHeader, SectionCode};
-    use crate::components::types::{AwwasmTypeSectionItem, ParamType};
+    use crate::components::types::{AwwasmCodeSectionItem, AwwasmFuncSectionItem, AwwasmTypeSectionItem, ParamType};
     use anyhow::Result;
 
     #[test]
@@ -162,6 +162,48 @@ mod tests {
         let mut module_parsed = AwwasmModule::new(&module)?;
         // Resolve all sections
         module_parsed.resolve_all_sections()?;
+        assert_eq!(module_parsed.types, Some(vec![AwwasmTypeSectionItem {
+            type_magic: &[96],
+            fn_args: vec![ParamType::I32, ParamType::I64],
+            fn_rets: vec![],
+        }]));
+        assert_eq!(module_parsed.funcs, Some(vec![AwwasmFuncSectionItem {
+            type_item_idx: 0,
+        }]));
+        assert_eq!(module_parsed.code, Some(vec![AwwasmCodeSectionItem {
+            fn_body_size: 2,
+            func_body: &[0, 11],
+        }]));
+        Ok(())
+    }
+
+    #[test]
+    fn decode_function_local_params_test() -> Result<()> {
+        // Generate a wasm module with a basic function with some local parameters.
+        let module = wat::parse_str(
+    "(module
+            (func
+                (local i32)
+                (local i64 i64)
+            )
+        )")?;
+        // Init and top level decode the module
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        // Resolve all sections
+        module_parsed.resolve_all_sections()?;
+        println!("{:?}", module_parsed);
+        assert_eq!(module_parsed.types, Some(vec![AwwasmTypeSectionItem {
+            type_magic: &[96],
+            fn_args: vec![],
+            fn_rets: vec![],
+        }]));
+        assert_eq!(module_parsed.funcs, Some(vec![AwwasmFuncSectionItem {
+            type_item_idx: 0,
+        }]));
+        assert_eq!(module_parsed.code, Some(vec![AwwasmCodeSectionItem {
+            fn_body_size: 2,
+            func_body: &[0, 11],
+        }]));
         Ok(())
     }
 }

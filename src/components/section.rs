@@ -44,7 +44,7 @@ pub struct AwwasmSection<'a> {
 }
 
 impl<'a> AwwasmSection<'a> {
-    pub fn resolve(&'a mut self) -> anyhow::Result<SectionItem<'a>> {
+    pub fn resolve(&mut self) -> anyhow::Result<SectionItem<'a>> {
         match self.section_header.section_type {
             SectionCode::Type => {
                 let mut types: Option<Vec<AwwasmTypeSectionItem<'a>>> = None;
