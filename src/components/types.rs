@@ -27,6 +27,7 @@ pub struct AwwasmTypeSectionItem<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Nom)]
 #[nom(LittleEndian)]
 pub struct AwwasmFuncSectionItem {
+    #[nom(Parse="leb128_u32")]
     pub type_item_idx: u32,
 }
 

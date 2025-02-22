@@ -1,11 +1,14 @@
 use crate::{limits::*};
 use crate::{consts::*};
 use crate::components::{section::*, types::*};
+use anyhow::Error;
 use nom_derive::*;
 use nom::AsBytes;
 use nom::IResult;
+use nom::multi::{count, many1};
+use nom::combinator::cond;
 
-#[derive(Debug, PartialEq, Eq, Nom)]
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
 #[nom(LittleEndian)]
 pub struct AwwasmModulePreamble<'a> {
     #[nom(Tag(WASM_MAGIC_NUMBER))]
@@ -16,7 +19,7 @@ pub struct AwwasmModulePreamble<'a> {
 impl Default for AwwasmModulePreamble<'_> {
     fn default() -> Self {
         Self {
-            magic: WASM_MAGIC_NUMBER.as_bytes().try_into().expect("Incorrect MAGIC NUMBER"),
+            magic: WASM_MAGIC_NUMBER.as_bytes().try_into().expect("Incorrect WASM MAGIC NUMBER"),
             version: 1,
         }
     }
@@ -30,7 +33,7 @@ impl AwwasmModulePreamble<'_> {
 }
 
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AwwasmModule<'a> {
     pub preamble: AwwasmModulePreamble<'a>,
     pub sections: Option<Vec<AwwasmSection<'a>>>,
@@ -43,10 +46,10 @@ impl Default for AwwasmModule<'_> {
     fn default() -> Self {
         Self {
             preamble: AwwasmModulePreamble::<'_>::default(),
-            sections: vec![].into(),
-            types: vec![].into(),
-            funcs: vec![].into(),
-            code: vec![].into(),
+            sections: None,
+            types: None,
+            funcs: None,
+            code: None,
         }
     }
 }
@@ -54,12 +57,13 @@ impl Default for AwwasmModule<'_> {
 impl<'a> Parse<&'a[u8]> for AwwasmModule<'a> {
     fn parse(input: &'a [u8]) -> IResult<&'a [u8], AwwasmModule<'a>> {
         let (input, p) = AwwasmModulePreamble::<'_>::parse(input)?;
+        let (input, secs) = cond(!input.is_empty(), many1(AwwasmSection::<'_>::parse))(input)?;
         Ok((input, Self {
             preamble: p,
-            sections: vec![].into(),
-            types: vec![].into(),
-            funcs: vec![].into(),
-            code: vec![].into(),
+            sections: secs,
+            types: None,
+            funcs: None,
+            code: None,
         }))
     }
 }
@@ -71,10 +75,26 @@ impl AwwasmModule<'_> {
     }
 }
 
+impl<'a> AwwasmModule<'a> {
+    pub fn resolve_all_sections(&'a mut self) -> anyhow::Result<()> {
+        self.sections.as_mut().unwrap().iter_mut().for_each(|sec| { 
+            let items = sec.resolve().map_err(|e| anyhow::anyhow!("Failed to parse WASM module: {}", e));
+            match items.unwrap() {
+                SectionItem::TypeSectionItems(x) => { self.types = x; },
+                SectionItem::FunctionSectionItems(x) => { self.funcs = x; },
+                SectionItem::CodeSectionItems(x) => { self.code = x; },
+            }
+        });
+        Ok(())
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
     use crate::components::module::{AwwasmModule, AwwasmModulePreamble};
+    use crate::components::section::{AwwasmSection, AwwasmSectionHeader, SectionCode};
+    use crate::components::types::{AwwasmTypeSectionItem, ParamType};
     use anyhow::Result;
 
     #[test]
@@ -92,8 +112,56 @@ mod tests {
         // Generate a wasm module with just preamble.
         let module = wat::parse_str("(module)")?;
         // Decode the module and validate.
-        let module = AwwasmModule::new(&module)?;
-        assert_eq!(module, AwwasmModule::default());
+        let module_parsed = AwwasmModule::new(&module)?;
+        assert_eq!(module_parsed, AwwasmModule::default());
+        Ok(())
+    }
+
+    #[test]
+    fn decode_minimal_module_with_minimal_fuction_test() -> Result<()> {
+        // Generate a wasm module with just preamble and an empty function.
+        let module = wat::parse_str("(module (func))")?;
+        // Decode the module and validate.
+        let module_parsed = AwwasmModule::new(&module)?;
+        assert_eq!(module_parsed, AwwasmModule {
+            preamble: AwwasmModulePreamble::<'_>::default(),
+            sections: Some(vec![AwwasmSection { 
+                section_header: AwwasmSectionHeader {
+                    section_type: SectionCode::Type,
+                    section_size: 4,
+                },
+                entry_count: 1,
+                section_body: &[96, 0, 0],
+            }, AwwasmSection {
+                section_header: AwwasmSectionHeader {
+                    section_type: SectionCode::Function,
+                    section_size: 2,
+                },
+                entry_count: 1,
+                section_body: &[0],
+            }, AwwasmSection {
+                section_header: AwwasmSectionHeader {
+                    section_type: SectionCode::Code,
+                    section_size: 4,
+                },
+                entry_count: 1,
+                section_body: &[2, 0, 11], 
+            }]),
+            types: None,
+            funcs: None,
+            code: None,
+        });
+        Ok(())
+    }
+
+    #[test]
+    fn decode_function_signature_test() -> Result<()> {
+        // Generate a wasm module with a function that takes parameters.
+        let module = wat::parse_str("(module (func (param i32 i64)))")?;
+        // Top level decode the module
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        // Resolve all sections
+        module_parsed.resolve_all_sections()?;
         Ok(())
     }
 }
