@@ -215,10 +215,10 @@ mod tests {
             parsed_func: Some(AwwasmFunction {
                 fn_rets: vec![AwwasmFunctionLocals {
                     type_count: 1,
-                    param_type: vec![ParamType::I32],
+                    param_type: ParamType::I32,
                 }, AwwasmFunctionLocals {
                     type_count: 2,
-                    param_type: vec![ParamType::I64],
+                    param_type: ParamType::I64,
                 }],
                 code: &[],
             }),

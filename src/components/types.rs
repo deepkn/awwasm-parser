@@ -11,8 +11,15 @@ use nom::combinator::cond;
 #[derive(Debug, Clone, PartialEq, Eq, FromPrimitive, Nom)]
 #[nom(LittleEndian)]
 pub enum ParamType {
+    IUnknown = 0x00,
     I32 = 0x7F,
     I64 = 0x7E,
+}
+
+impl Default for ParamType {
+    fn default() -> Self {
+        ParamType::IUnknown
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Nom)]
@@ -58,8 +65,7 @@ pub struct AwwasmFunction<'a> {
 pub struct AwwasmFunctionLocals {
     #[nom(Parse="leb128_u32")]
     pub type_count: u32,
-    #[nom(Count="1")]
-    pub param_type: Vec<ParamType>,
+    pub param_type: ParamType,
 }
 
 impl<'a> AwwasmCodeSectionItem<'a> {
