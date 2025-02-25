@@ -94,7 +94,7 @@ impl<'a> AwwasmModule<'a> {
 mod tests {
     use crate::components::module::{AwwasmModule, AwwasmModulePreamble};
     use crate::components::section::{AwwasmSection, AwwasmSectionHeader, SectionCode};
-    use crate::components::types::{AwwasmCodeSectionItem, AwwasmFuncSectionItem, AwwasmTypeSectionItem, ParamType};
+    use crate::components::types::{AwwasmCodeSectionItem, AwwasmFuncSectionItem, AwwasmFunction, AwwasmFunctionLocals, AwwasmTypeSectionItem, ParamType};
     use anyhow::Result;
 
     #[test]
@@ -173,6 +173,7 @@ mod tests {
         assert_eq!(module_parsed.code, Some(vec![AwwasmCodeSectionItem {
             fn_body_size: 2,
             func_body: &[0, 11],
+            parsed_func: None,
         }]));
         Ok(())
     }
@@ -201,8 +202,26 @@ mod tests {
             type_item_idx: 0,
         }]));
         assert_eq!(module_parsed.code, Some(vec![AwwasmCodeSectionItem {
-            fn_body_size: 2,
-            func_body: &[0, 11],
+            fn_body_size: 6,
+            func_body: &[2, 1, 127, 2, 126, 11],
+            parsed_func: None,
+        }]));
+        module_parsed.code.as_mut().unwrap().iter_mut().for_each(|x| {
+            x.resolve().unwrap();
+        });
+        assert_eq!(module_parsed.code, Some(vec![AwwasmCodeSectionItem {
+            fn_body_size: 6,
+            func_body: &[11],
+            parsed_func: Some(AwwasmFunction {
+                fn_rets: vec![AwwasmFunctionLocals {
+                    type_count: 1,
+                    param_type: vec![ParamType::I32],
+                }, AwwasmFunctionLocals {
+                    type_count: 2,
+                    param_type: vec![ParamType::I64],
+                }],
+                code: &[],
+            }),
         }]));
         Ok(())
     }

@@ -49,19 +49,16 @@ impl<'a> AwwasmSection<'a> {
             SectionCode::Type => {
                 let mut types: Option<Vec<AwwasmTypeSectionItem<'a>>> = None;
                 (self.section_body, types) = cond(!self.section_body.is_empty(), count(AwwasmTypeSectionItem::<'_>::parse, self.entry_count.try_into().unwrap()))(self.section_body).map_err(|e| anyhow::anyhow!("Failed to parse WASM Type Section: {}", e))?;
-                println!("Type Section: {:?}", types);
                 Ok(SectionItem::TypeSectionItems(types))
             },
             SectionCode::Function => {
                 let mut funcs: Option<Vec<AwwasmFuncSectionItem>> = None;
                 (self.section_body, funcs) = cond(!self.section_body.is_empty(), count(AwwasmFuncSectionItem::parse, self.entry_count.try_into().unwrap()))(self.section_body).map_err(|e| anyhow::anyhow!("Failed to parse WASM Function Section: {}", e))?;
-                println!("Fn Section: {:?}", funcs);
                 Ok(SectionItem::FunctionSectionItems(funcs))
             },
             SectionCode::Code => {
                 let mut code: Option<Vec<AwwasmCodeSectionItem<'a>>> = None;
                 (self.section_body, code) = cond(!self.section_body.is_empty(), count(AwwasmCodeSectionItem::<'_>::parse, self.entry_count.try_into().unwrap()))(self.section_body).map_err(|e| anyhow::anyhow!("Failed to parse WASM Code Section: {}", e))?;
-                println!("Code Section: {:?}", code);
                 Ok(SectionItem::CodeSectionItems(code))
             },
             _ => Err(anyhow::anyhow!("Unknown/Not Implemented WASM module section")),
