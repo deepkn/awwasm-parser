@@ -2,7 +2,6 @@ use crate::{consts::*};
 use crate::components::{instructions::*};
 use num_derive::FromPrimitive;
 use nom_derive::*;
-use nom::number::complete::le_u8;
 use nom_leb128::leb128_u32;
 use nom::bytes::complete::take_while;
 use nom::combinator::cond;
@@ -27,9 +26,9 @@ impl Default for ParamType {
 pub struct AwwasmTypeSectionItem<'a> {
     #[nom(Tag(WASM_TYPE_SECTION_OPCODE_FUNC))]
     pub type_magic: &'a[u8],
-    #[nom(LengthCount="le_u8")]
+    #[nom(LengthCount="leb128_u32")]
     pub fn_args: Vec<ParamType>,
-    #[nom(LengthCount="le_u8")]
+    #[nom(LengthCount="leb128_u32")]
     pub fn_rets: Vec<ParamType>,
 }
 
@@ -54,7 +53,7 @@ pub struct AwwasmCodeSectionItem<'a> {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Nom)]
 #[nom(LittleEndian)]
 pub struct AwwasmFunction<'a> {
-    #[nom(LengthCount="le_u8")]
+    #[nom(LengthCount="leb128_u32")]
     pub fn_rets: Vec<AwwasmFunctionLocals>,
     #[nom(Parse = "take_while(|byte| byte != WASM_FUNC_SECTION_OPCODE_END)")]
     pub code: &'a[u8],
@@ -74,3 +73,74 @@ impl<'a> AwwasmCodeSectionItem<'a> {
         Ok(())
     }
 }
+
+// Memory section types
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmMemoryParams {
+    #[nom(Parse = "leb128_u32")]
+    pub flags: u32,
+    #[nom(Parse = "leb128_u32")]
+    pub min: u32,
+    #[nom(Cond = "(flags & 0x1) != 0", Parse = "leb128_u32")]
+    pub max: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmMemorySectionItem {
+    pub limits: AwwasmMemoryParams,
+}
+
+// Import section types
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmName<'a> {
+    #[nom(Parse = "leb128_u32")]
+    pub len: u32,
+    #[nom(Take = "len")]
+    pub bytes: &'a [u8],
+}
+
+#[repr(u8)]
+#[derive(Debug, Clone, PartialEq, Eq, FromPrimitive, Nom)]
+#[nom(LittleEndian)]
+pub enum AwwasmImportKind {
+    Function = 0x00,
+    Table = 0x01,
+    Memory = 0x02,
+    Global = 0x03,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmImportSectionItem<'a> {
+    pub module: AwwasmName<'a>,
+    pub name: AwwasmName<'a>,
+    pub kind: AwwasmImportKind,
+    #[nom(Cond = "kind == AwwasmImportKind::Function", Parse = "leb128_u32")]
+    pub func_type_idx: Option<u32>,
+    #[nom(Cond = "kind == AwwasmImportKind::Memory")]
+    pub mem: Option<AwwasmMemoryParams>,
+}
+
+// Export section types
+#[repr(u8)]
+#[derive(Debug, Clone, PartialEq, Eq, FromPrimitive, Nom)]
+#[nom(LittleEndian)]
+pub enum AwwasmExportKind {
+    Function = 0x00,
+    Table = 0x01,
+    Memory = 0x02,
+    Global = 0x03,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmExportSectionItem<'a> {
+    pub name: AwwasmName<'a>,
+    pub kind: AwwasmExportKind,
+    #[nom(Parse = "leb128_u32")]
+    pub index: u32,
+}
+

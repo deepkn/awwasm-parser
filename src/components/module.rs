@@ -38,8 +38,11 @@ pub struct AwwasmModule<'a> {
     pub preamble: AwwasmModulePreamble<'a>,
     pub sections: Option<Vec<AwwasmSection<'a>>>,
     pub types: Option<Vec<AwwasmTypeSectionItem<'a>>>,
+    pub imports: Option<Vec<AwwasmImportSectionItem<'a>>>,
+    pub exports: Option<Vec<AwwasmExportSectionItem<'a>>>,
     pub funcs: Option<Vec<AwwasmFuncSectionItem>>,
     pub code: Option<Vec<AwwasmCodeSectionItem<'a>>>,
+    pub memories: Option<Vec<AwwasmMemorySectionItem>>,
 }
 
 impl Default for AwwasmModule<'_> {
@@ -48,8 +51,11 @@ impl Default for AwwasmModule<'_> {
             preamble: AwwasmModulePreamble::<'_>::default(),
             sections: None,
             types: None,
+            imports: None,
+            exports: None,
             funcs: None,
             code: None,
+            memories: None,
         }
     }
 }
@@ -62,8 +68,11 @@ impl<'a> Parse<&'a[u8]> for AwwasmModule<'a> {
             preamble: p,
             sections: secs,
             types: None,
+            imports: None,
+            exports: None,
             funcs: None,
             code: None,
+            memories: None,
         }))
     }
 }
@@ -81,8 +90,11 @@ impl<'a> AwwasmModule<'a> {
             let items = sec.resolve().map_err(|e| anyhow::anyhow!("Failed to parse WASM module: {}", e));
             match items.unwrap() {
                 SectionItem::TypeSectionItems(x) => { self.types = x; },
+                SectionItem::ImportSectionItems(x) => { self.imports = x; },
+                SectionItem::ExportSectionItems(x) => { self.exports = x; },
                 SectionItem::FunctionSectionItems(x) => { self.funcs = x; },
                 SectionItem::CodeSectionItems(x) => { self.code = x; },
+                SectionItem::MemorySectionItems(x) => { self.memories = x; },
             }
         });
         Ok(())
@@ -94,7 +106,11 @@ impl<'a> AwwasmModule<'a> {
 mod tests {
     use crate::components::module::{AwwasmModule, AwwasmModulePreamble};
     use crate::components::section::{AwwasmSection, AwwasmSectionHeader, SectionCode};
-    use crate::components::types::{AwwasmCodeSectionItem, AwwasmFuncSectionItem, AwwasmFunction, AwwasmFunctionLocals, AwwasmTypeSectionItem, ParamType};
+    use crate::components::types::{
+        AwwasmCodeSectionItem, AwwasmFuncSectionItem, AwwasmFunction, 
+        AwwasmFunctionLocals, AwwasmTypeSectionItem, ParamType, 
+        AwwasmImportKind, AwwasmExportKind
+    };
     use anyhow::Result;
 
     #[test]
@@ -148,8 +164,11 @@ mod tests {
                 section_body: &[2, 0, 11], 
             }]),
             types: None,
+            imports: None,
+            exports: None,
             funcs: None,
             code: None,
+            memories: None,
         });
         Ok(())
     }
@@ -192,7 +211,6 @@ mod tests {
         let mut module_parsed = AwwasmModule::new(&module)?;
         // Resolve all sections
         module_parsed.resolve_all_sections()?;
-        println!("{:?}", module_parsed);
         assert_eq!(module_parsed.types, Some(vec![AwwasmTypeSectionItem {
             type_magic: &[96],
             fn_args: vec![],
@@ -223,6 +241,124 @@ mod tests {
                 code: &[],
             }),
         }]));
+        Ok(())
+    }
+
+    #[test]
+    fn decode_memory_min_only_test() -> anyhow::Result<()> {
+        // (memory 1) => flags = 0, min = 1, no max
+        let module = wat::parse_str("(module (memory 1))")?;
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        module_parsed.resolve_all_sections()?;
+
+        let memories = module_parsed.memories.as_ref().expect("memories should exist");
+        assert_eq!(memories.len(), 1);
+        let m = &memories[0];
+        assert_eq!(m.limits.flags, 0);
+        assert_eq!(m.limits.min, 1);
+        assert!(m.limits.max.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn decode_memory_min_max_test() -> anyhow::Result<()> {
+        // (memory 1 2) => flags = 1, min = 1, max = 2
+        let module = wat::parse_str("(module (memory 1 2))")?;
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        module_parsed.resolve_all_sections()?;
+
+        let memories = module_parsed.memories.as_ref().expect("memories should exist");
+        assert_eq!(memories.len(), 1);
+        let m = &memories[0];
+        assert_eq!(m.limits.flags, 1);
+        assert_eq!(m.limits.min, 1);
+        assert_eq!(m.limits.max, Some(2));
+        Ok(())
+    }
+
+    #[test]
+    fn decode_import_memory_and_function_test() -> anyhow::Result<()> {
+        // Import a memory and a function; ensure both decode correctly
+        let module = wat::parse_str(r#"
+            (module
+            (import "env" "mem" (memory 1 2))
+            (import "env" "add1" (func (param i32) (result i32)))
+            )
+        "#)?;
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        module_parsed.resolve_all_sections()?;
+
+        // Validate imports
+        let imports = module_parsed.imports.as_ref().expect("imports should exist");
+        assert_eq!(imports.len(), 2);
+
+        // memory import
+        let i0 = &imports[0];
+        assert_eq!(i0.module.bytes, b"env");
+        assert_eq!(i0.name.bytes, b"mem");
+        assert_eq!(i0.kind, AwwasmImportKind::Memory);
+        assert!(i0.func_type_idx.is_none());
+        let mp = i0.mem.as_ref().expect("memory params");
+        assert_eq!(mp.flags, 1);
+        assert_eq!(mp.min, 1);
+        assert_eq!(mp.max, Some(2));
+
+        // function import
+        let i1 = &imports[1];
+        assert_eq!(i1.module.bytes, b"env");
+        assert_eq!(i1.name.bytes, b"add1");
+        assert_eq!(i1.kind, AwwasmImportKind::Function);
+        assert!(i1.mem.is_none());
+        // Function imports reference a type index; with this single func type it should be 0
+        assert_eq!(i1.func_type_idx, Some(0));
+
+        // validate the generated type section as well
+        let types = module_parsed.types.as_ref().expect("types should exist");
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].type_magic, &[0x60]);
+        assert_eq!(types[0].fn_args, vec![ParamType::I32]);
+        assert_eq!(types[0].fn_rets, vec![ParamType::I32]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn decode_export_memory_and_function_test() -> anyhow::Result<()> {
+        // Define a module with one function and one memory, and export both.
+        let module = wat::parse_str(r#"
+            (module
+            (func (param i32) (result i32))
+            (memory 1 2)
+            (export "mem" (memory 0))
+            (export "add1" (func 0))
+            )
+        "#)?;
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        module_parsed.resolve_all_sections()?;
+
+        // Validate exports
+        let exports = module_parsed.exports.as_ref().expect("exports should exist");
+        assert_eq!(exports.len(), 2);
+
+        // First export: memory 0 as "mem"
+        let e0 = &exports[0];
+        assert_eq!(e0.name.bytes, b"mem");
+        assert_eq!(e0.kind, AwwasmExportKind::Memory);
+        assert_eq!(e0.index, 0);
+
+        // Second export: func 0 as "add1"
+        let e1 = &exports[1];
+        assert_eq!(e1.name.bytes, b"add1");
+        assert_eq!(e1.kind, AwwasmExportKind::Function);
+        assert_eq!(e1.index, 0);
+
+        // validate the type section produced for the function
+        let types = module_parsed.types.as_ref().expect("types should exist");
+        assert_eq!(types.len(), 1);
+        assert_eq!(types[0].type_magic, &[0x60]);
+        assert_eq!(types[0].fn_args, vec![ParamType::I32]);
+        assert_eq!(types[0].fn_rets, vec![ParamType::I32]);
+
         Ok(())
     }
 }
