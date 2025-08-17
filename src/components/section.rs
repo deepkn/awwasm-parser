@@ -37,6 +37,7 @@ pub enum SectionItem<'a> {
     CodeSectionItems(Option<Vec<AwwasmCodeSectionItem<'a>>>),
     MemorySectionItems(Option<Vec<AwwasmMemorySectionItem>>),
     ExportSectionItems(Option<Vec<AwwasmExportSectionItem<'a>>>),
+    DataSectionItems(Option<Vec<AwwasmDataSectionItem<'a>>>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Nom)]
@@ -89,6 +90,11 @@ impl<'a> AwwasmSection<'a> {
                 let mut exports: Option<Vec<AwwasmExportSectionItem<'a>>> = None;
                 (self.section_body, exports) = cond(!self.section_body.is_empty(), count(AwwasmExportSectionItem::<'_>::parse, self.entry_count.try_into().unwrap()))(self.section_body).map_err(|e| anyhow::anyhow!("Failed to parse WASM Export Section: {}", e))?;
                 Ok(SectionItem::ExportSectionItems(exports))
+            },
+            SectionCode::Data => {
+                let mut data: Option<Vec<AwwasmDataSectionItem<'a>>> = None;
+                (self.section_body, data) = cond(!self.section_body.is_empty(), count(AwwasmDataSectionItem::<'_>::parse, self.entry_count.try_into().unwrap()))(self.section_body).map_err(|e| anyhow::anyhow!("Failed to parse WASM Data Section: {}", e))?;
+                Ok(SectionItem::DataSectionItems(data))
             },
             _ => Err(anyhow::anyhow!("Unknown/Not Implemented WASM module section")),
         }

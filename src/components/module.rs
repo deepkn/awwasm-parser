@@ -43,6 +43,7 @@ pub struct AwwasmModule<'a> {
     pub funcs: Option<Vec<AwwasmFuncSectionItem>>,
     pub code: Option<Vec<AwwasmCodeSectionItem<'a>>>,
     pub memories: Option<Vec<AwwasmMemorySectionItem>>,
+    pub data: Option<Vec<AwwasmDataSectionItem<'a>>>,
 }
 
 impl Default for AwwasmModule<'_> {
@@ -56,6 +57,7 @@ impl Default for AwwasmModule<'_> {
             funcs: None,
             code: None,
             memories: None,
+            data: None,
         }
     }
 }
@@ -73,6 +75,7 @@ impl<'a> Parse<&'a[u8]> for AwwasmModule<'a> {
             funcs: None,
             code: None,
             memories: None,
+            data: None,
         }))
     }
 }
@@ -95,6 +98,7 @@ impl<'a> AwwasmModule<'a> {
                 SectionItem::FunctionSectionItems(x) => { self.funcs = x; },
                 SectionItem::CodeSectionItems(x) => { self.code = x; },
                 SectionItem::MemorySectionItems(x) => { self.memories = x; },
+                SectionItem::DataSectionItems(x) => { self.data = x; },
             }
         });
         Ok(())
@@ -169,6 +173,7 @@ mod tests {
             funcs: None,
             code: None,
             memories: None,
+            data: None,
         });
         Ok(())
     }
@@ -327,10 +332,10 @@ mod tests {
         // Define a module with one function and one memory, and export both.
         let module = wat::parse_str(r#"
             (module
-            (func (param i32) (result i32))
-            (memory 1 2)
-            (export "mem" (memory 0))
-            (export "add1" (func 0))
+                (func (param i32) (result i32))
+                (memory 1 2)
+                (export "mem" (memory 0))
+                (export "add1" (func 0))
             )
         "#)?;
         let mut module_parsed = AwwasmModule::new(&module)?;
@@ -359,6 +364,61 @@ mod tests {
         assert_eq!(types[0].fn_args, vec![ParamType::I32]);
         assert_eq!(types[0].fn_rets, vec![ParamType::I32]);
 
+        Ok(())
+    }
+
+    #[test]
+    fn decode_data_active_implicit_memidx_test() -> anyhow::Result<()> {
+        // Active segment with implicit memidx 0 and offset i32.const 1, bytes "hi"
+        let module = wat::parse_str(r#"
+            (module
+            (memory 1)
+            (data (i32.const 1) "hi")
+            )
+        "#)?;
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        module_parsed.resolve_all_sections()?;
+
+        let data = module_parsed.data.as_ref().expect("data should exist");
+        assert_eq!(data.len(), 1);
+
+        let seg = &data[0];
+        assert_eq!(seg.header.flags, 0x00);                    // active, implicit memidx
+        assert_eq!(seg.header.memidx, None);
+        let offset = seg.header.offset.as_ref().expect("offset expr");
+        assert_eq!(offset.end, 0x0b);                          // end opcode consumed
+        assert!(!offset.code.is_empty() && offset.code[0] == 0x41); // i32.const
+        assert_eq!(offset.code.last().copied(), Some(0x01));   // value 1 (LEB128)
+        assert_eq!(seg.size, 2);
+        assert_eq!(seg.data_bytes, b"hi");
+        Ok(())
+    }
+
+    #[test]
+    fn decode_data_active_explicit_memidx_test() -> anyhow::Result<()> {
+        // Active segment with explicit memidx 1 and offset i32.const 2, bytes "x"
+        let module = wat::parse_str(r#"
+            (module
+                (memory 1)
+                (memory 1)
+                (data 1 (i32.const 2) "x")
+            )
+        "#)?;
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        module_parsed.resolve_all_sections()?;
+
+        let data = module_parsed.data.as_ref().expect("data should exist");
+        assert_eq!(data.len(), 1);
+
+        let seg = &data[0];
+        assert_eq!(seg.header.flags, 0x02);                    // active with explicit memidx
+        assert_eq!(seg.header.memidx, Some(1));
+        let offset = seg.header.offset.as_ref().expect("offset expr");
+        assert_eq!(offset.end, 0x0b);                          // end opcode consumed
+        assert!(!offset.code.is_empty() && offset.code[0] == 0x41); // i32.const
+        assert_eq!(offset.code.last().copied(), Some(0x02));   // value 2 (LEB128)
+        assert_eq!(seg.size, 1);
+        assert_eq!(seg.data_bytes, b"x");
         Ok(())
     }
 }

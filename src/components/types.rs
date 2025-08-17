@@ -5,6 +5,7 @@ use nom_derive::*;
 use nom_leb128::leb128_u32;
 use nom::bytes::complete::take_while;
 use nom::combinator::cond;
+use nom::number::complete::le_u8;
 
 #[repr(u8)]
 #[derive(Debug, Clone, PartialEq, Eq, FromPrimitive, Nom)]
@@ -142,5 +143,36 @@ pub struct AwwasmExportSectionItem<'a> {
     pub kind: AwwasmExportKind,
     #[nom(Parse = "leb128_u32")]
     pub index: u32,
+}
+
+// Data section types
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmDataInitExpr<'a> {
+    #[nom(Parse = "take_while(|byte| byte != WASM_FUNC_SECTION_OPCODE_END)")]
+    pub code: &'a [u8],
+    #[nom(Parse = "le_u8")]
+    pub end: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmDataSegmentHeader<'a> {
+    #[nom(Parse = "leb128_u32")]
+    pub flags: u32,
+    #[nom(Cond = "flags == 0x02", Parse = "leb128_u32")]
+    pub memidx: Option<u32>,
+    #[nom(Cond = "flags == 0x00 || flags == 0x02")]
+    pub offset: Option<AwwasmDataInitExpr<'a>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmDataSectionItem<'a> {
+    pub header: AwwasmDataSegmentHeader<'a>,
+    #[nom(Parse = "leb128_u32")]
+    pub size: u32,
+    #[nom(Take = "size")]
+    pub data_bytes: &'a [u8],
 }
 
