@@ -348,3 +348,23 @@ impl<'a> Iterator for InstructionIterator<'a> {
         }
     }
 }
+
+
+/// Evaluate a constant initializer expression and return its i32 value.
+///
+/// Used for data segment offsets and global initializers.
+/// The `code` bytes contain the raw instruction (e.g. `i32.const N`)
+/// without the trailing `end` (0x0B) opcode.
+pub fn eval_const_init_expr(code: &[u8]) -> anyhow::Result<i32> {
+    if code.is_empty() {
+        return Err(anyhow::anyhow!("empty constant expression"));
+    }
+
+    let (_rest, instr) = AwwasmInstruction::parse(code)
+        .map_err(|e| anyhow::anyhow!("failed to parse init expr: {}", e))?;
+
+    match instr.operands {
+        AwwasmOperands::I32Const(op) => Ok(op.value),
+        _ => Err(anyhow::anyhow!("unsupported init expr opcode: {:?}", instr.opcode)),
+    }
+}

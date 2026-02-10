@@ -206,7 +206,7 @@ mod tests {
     fn decode_function_local_params_test() -> Result<()> {
         // Generate a wasm module with a basic function with some local parameters.
         let module = wat::parse_str(
-    "(module
+        "(module
             (func
                 (local i32)
                 (local i64 i64)
