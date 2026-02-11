@@ -20,6 +20,8 @@ pub enum BlockValueType {
 #[nom(LittleEndian)]
 pub enum WasmOpCode {
     // Control Flow
+    Unreachable = 0x00,
+    Nop = 0x01,
     Block = 0x02,
     Loop = 0x03,
     If = 0x04,
@@ -33,6 +35,10 @@ pub enum WasmOpCode {
     // Calls
     Call = 0x10,
     CallIndirect = 0x11,
+
+    // Parametric
+    Drop = 0x1A,
+    Select = 0x1B,
 
     // Variable Access
     LocalGet = 0x20,
@@ -78,6 +84,12 @@ pub struct AwwasmInstruction<'a> {
 #[nom(LittleEndian, Selector = "WasmOpCode")]
 pub enum AwwasmOperands<'a> {
     // Control Flow (using custom parsers for nested structures)
+    #[nom(Selector = "WasmOpCode::Unreachable")]
+    Unreachable,
+
+    #[nom(Selector = "WasmOpCode::Nop")]
+    Nop,
+
     #[nom(Selector = "WasmOpCode::Block")]
     Block(BlockOperands<'a>),
 
@@ -86,6 +98,12 @@ pub enum AwwasmOperands<'a> {
 
     #[nom(Selector = "WasmOpCode::If")]
     If(IfOperands<'a>),
+
+    #[nom(Selector = "WasmOpCode::Else")]
+    Else,
+
+    #[nom(Selector = "WasmOpCode::End")]
+    End,
     
     // Branches - pure nom_derive
     #[nom(Selector = "WasmOpCode::Br")]
@@ -106,6 +124,13 @@ pub enum AwwasmOperands<'a> {
 
     #[nom(Selector = "WasmOpCode::CallIndirect")]
     CallIndirect(CallIndirectOperands),
+ 
+    // Parametric
+    #[nom(Selector = "WasmOpCode::Drop")]
+    Drop,
+
+    #[nom(Selector = "WasmOpCode::Select")]
+    Select,
 
     // Variables - pure nom_derive
     #[nom(Selector = "WasmOpCode::LocalGet")]
