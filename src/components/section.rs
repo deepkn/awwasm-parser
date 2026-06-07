@@ -1,7 +1,7 @@
 use num_derive::FromPrimitive;
 use nom_derive::*;
 use nom_leb128::leb128_u32;
-use nom::bytes::complete::take;
+use nom::bytes::streaming::take;
 use nom::multi::count;
 use nom::combinator::cond;
 use crate::components::types::*;

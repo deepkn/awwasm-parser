@@ -104,9 +104,64 @@ impl<'a> Parse<&'a[u8]> for AwwasmModule<'a> {
 }
 
 impl AwwasmModule<'_> {
+    /// Parses the entire module (for non-streaming cases).
     pub fn new(input: &[u8]) -> anyhow::Result<AwwasmModule> {
         let (_, module) = AwwasmModule::parse(input).map_err(|e| anyhow::anyhow!("Failed to parse WASM module: {}", e))?;
         Ok(module)
+    }
+}
+
+/// A stateful parser that ingests WASM bytes in chunks.
+/// The underlying byte buffer must live for `'a` (e.g., an mmap or growing arena),
+/// and the caller passes the newly available unparsed slice (or the remaining slice)
+/// to `parse_chunk`.
+#[derive(Debug, Default)]
+pub struct AwwasmStreamingParser<'a> {
+    pub module: AwwasmModule<'a>,
+    pub preamble_parsed: bool,
+}
+
+impl<'a> AwwasmStreamingParser<'a> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Parse as many sections as possible from the input.
+    /// Returns the number of new sections successfully parsed and the remaining
+    /// unparsed input. The caller should save the remaining input, append new
+    /// bytes to it as they arrive, and call `parse_chunk` again.
+    pub fn parse_chunk(&mut self, mut input: &'a [u8]) -> IResult<&'a [u8], usize> {
+        let mut parsed_count = 0;
+
+        if !self.preamble_parsed {
+            // nom::Err::Incomplete will be returned here if input is < 8 bytes
+            let (new_input, preamble) = AwwasmModulePreamble::parse(input)?;
+            self.module.preamble = preamble;
+            self.preamble_parsed = true;
+            input = new_input;
+        }
+
+        loop {
+            if input.is_empty() {
+                break;
+            }
+            match AwwasmSection::parse(input) {
+                Ok((new_input, sec)) => {
+                    if self.module.sections.is_none() {
+                        self.module.sections = Some(Vec::new());
+                    }
+                    self.module.sections.as_mut().unwrap().push(sec);
+                    input = new_input;
+                    parsed_count += 1;
+                }
+                Err(nom::Err::Incomplete(_)) => {
+                    break;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok((input, parsed_count))
     }
 }
 
@@ -502,6 +557,38 @@ mod tests {
         module_parsed.resolve_all_sections()?;
 
         assert_eq!(module_parsed.start, Some(AwwasmStartSectionItem { func_idx: 0 }));
+        Ok(())
+    }
+
+    #[test]
+    fn decode_streaming_incomplete_test() -> anyhow::Result<()> {
+        let module_bytes = wat::parse_str(r#"
+            (module (memory 1))
+        "#)?;
+
+        let mut parser = crate::components::module::AwwasmStreamingParser::new();
+        
+        // Pass only the first 4 bytes (incomplete preamble)
+        let res = parser.parse_chunk(&module_bytes[0..4]);
+        assert!(matches!(res, Err(nom::Err::Incomplete(_))));
+        assert!(!parser.preamble_parsed);
+
+        // Pass 10 bytes (preamble + 2 bytes of section)
+        let (rem1, count1) = parser.parse_chunk(&module_bytes[0..10]).unwrap();
+        assert_eq!(rem1.len(), 2);
+        assert_eq!(count1, 0);
+        assert!(parser.preamble_parsed);
+
+        // Pass remaining bytes
+        let (rem2, count2) = parser.parse_chunk(&module_bytes[8..]).unwrap();
+        assert_eq!(rem2.len(), 0);
+        assert!(count2 > 0);
+
+        parser.module.resolve_all_sections()?;
+        
+        let memories = parser.module.memories.as_ref().expect("memories should exist");
+        assert_eq!(memories.len(), 1);
+
         Ok(())
     }
 }
