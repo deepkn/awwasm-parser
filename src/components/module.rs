@@ -1,12 +1,11 @@
 use crate::{limits::*};
 use crate::{consts::*};
 use crate::components::{section::*, types::*};
-use anyhow::Error;
 use nom_derive::*;
 use nom::AsBytes;
 use nom::IResult;
-use nom::multi::{count, many1};
-use nom::combinator::cond;
+use nom::multi::many1;
+use nom::combinator::{cond, complete};
 
 #[derive(Debug, Clone, PartialEq, Eq, Nom)]
 #[nom(LittleEndian)]
@@ -36,14 +35,30 @@ impl AwwasmModulePreamble<'_> {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AwwasmModule<'a> {
     pub preamble: AwwasmModulePreamble<'a>,
+    /// Raw parsed sections (before resolve).
     pub sections: Option<Vec<AwwasmSection<'a>>>,
+    /// Resolved type section.
     pub types: Option<Vec<AwwasmTypeSectionItem<'a>>>,
+    /// Resolved import section.
     pub imports: Option<Vec<AwwasmImportSectionItem<'a>>>,
+    /// Resolved export section.
     pub exports: Option<Vec<AwwasmExportSectionItem<'a>>>,
+    /// Resolved function section (type indices).
     pub funcs: Option<Vec<AwwasmFuncSectionItem>>,
+    /// Resolved code section (function bodies).
     pub code: Option<Vec<AwwasmCodeSectionItem<'a>>>,
+    /// Resolved memory section.
     pub memories: Option<Vec<AwwasmMemorySectionItem>>,
+    /// Resolved data section.
     pub data: Option<Vec<AwwasmDataSectionItem<'a>>>,
+    /// Resolved global section.
+    pub globals: Option<Vec<AwwasmGlobalSectionItem<'a>>>,
+    /// Resolved table section.
+    pub tables: Option<Vec<AwwasmTableSectionItem>>,
+    /// Resolved element section.
+    pub elements: Option<Vec<AwwasmElementSectionItem<'a>>>,
+    /// Start section item (from start section), if present.
+    pub start: Option<AwwasmStartSectionItem>,
 }
 
 impl Default for AwwasmModule<'_> {
@@ -58,6 +73,10 @@ impl Default for AwwasmModule<'_> {
             code: None,
             memories: None,
             data: None,
+            globals: None,
+            tables: None,
+            elements: None,
+            start: None,
         }
     }
 }
@@ -65,7 +84,7 @@ impl Default for AwwasmModule<'_> {
 impl<'a> Parse<&'a[u8]> for AwwasmModule<'a> {
     fn parse(input: &'a [u8]) -> IResult<&'a [u8], AwwasmModule<'a>> {
         let (input, p) = AwwasmModulePreamble::<'_>::parse(input)?;
-        let (input, secs) = cond(!input.is_empty(), many1(AwwasmSection::<'_>::parse))(input)?;
+        let (input, secs) = cond(!input.is_empty(), many1(complete(AwwasmSection::<'_>::parse)))(input)?;
         Ok((input, Self {
             preamble: p,
             sections: secs,
@@ -76,6 +95,10 @@ impl<'a> Parse<&'a[u8]> for AwwasmModule<'a> {
             code: None,
             memories: None,
             data: None,
+            globals: None,
+            tables: None,
+            elements: None,
+            start: None,
         }))
     }
 }
@@ -88,17 +111,27 @@ impl AwwasmModule<'_> {
 }
 
 impl<'a> AwwasmModule<'a> {
+    /// Resolve all raw section bodies into typed data.
+    ///
+    /// After calling this, fields like `types`, `imports`, `funcs`, `code`,
+    /// `memories`, `data`, `globals`, `tables`, `elements`, and `start` are
+    /// populated from the parsed sections.
     pub fn resolve_all_sections(&mut self) -> anyhow::Result<()> {
         self.sections.as_mut().unwrap().iter_mut().for_each(|sec| { 
             let items = sec.resolve().map_err(|e| anyhow::anyhow!("Failed to parse WASM module: {}", e));
             match items.unwrap() {
-                SectionItem::TypeSectionItems(x) => { self.types = x; },
-                SectionItem::ImportSectionItems(x) => { self.imports = x; },
-                SectionItem::ExportSectionItems(x) => { self.exports = x; },
-                SectionItem::FunctionSectionItems(x) => { self.funcs = x; },
-                SectionItem::CodeSectionItems(x) => { self.code = x; },
-                SectionItem::MemorySectionItems(x) => { self.memories = x; },
-                SectionItem::DataSectionItems(x) => { self.data = x; },
+                SectionItem::TypeSectionItems(x)     => { self.types    = x; }
+                SectionItem::ImportSectionItems(x)   => { self.imports  = x; }
+                SectionItem::FunctionSectionItems(x) => { self.funcs    = x; }
+                SectionItem::TableSectionItems(x)    => { self.tables   = x; }
+                SectionItem::MemorySectionItems(x)   => { self.memories = x; }
+                SectionItem::GlobalSectionItems(x)   => { self.globals  = x; }
+                SectionItem::ExportSectionItems(x)   => { self.exports  = x; }
+                SectionItem::ElementSectionItems(x)  => { self.elements = x; }
+                SectionItem::CodeSectionItems(x)     => { self.code     = x; }
+                SectionItem::DataSectionItems(x)     => { self.data     = x; }
+                SectionItem::StartSection(x)         => { self.start    = x; }
+                SectionItem::CustomSection           => { /* skip */ }
             }
         });
         Ok(())
@@ -113,7 +146,9 @@ mod tests {
     use crate::components::types::{
         AwwasmCodeSectionItem, AwwasmFuncSectionItem, AwwasmFunction, 
         AwwasmFunctionLocals, AwwasmTypeSectionItem, ParamType, 
-        AwwasmImportKind, AwwasmExportKind
+        AwwasmImportKind, AwwasmExportKind,
+        AwwasmGlobalMutability, AwwasmTableReferenceType,
+        AwwasmStartSectionItem,
     };
     use anyhow::Result;
 
@@ -167,13 +202,8 @@ mod tests {
                 entry_count: 1,
                 section_body: &[2, 0, 11], 
             }]),
-            types: None,
-            imports: None,
-            exports: None,
-            funcs: None,
-            code: None,
-            memories: None,
-            data: None,
+            // All resolved fields default to None before resolve_all_sections()
+            ..AwwasmModule::default()
         });
         Ok(())
     }
@@ -421,5 +451,57 @@ mod tests {
         assert_eq!(seg.data_bytes, b"x");
         Ok(())
     }
-}
 
+    #[test]
+    fn decode_global_section_test() -> anyhow::Result<()> {
+        let module = wat::parse_str(r#"
+            (module
+                (global i32 (i32.const 42))
+                (global (mut i64) (i64.const 100))
+            )
+        "#)?;
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        module_parsed.resolve_all_sections()?;
+
+        let globals = module_parsed.globals.as_ref().expect("globals should exist");
+        assert_eq!(globals.len(), 2);
+        assert_eq!(globals[0].value_type, ParamType::I32);
+        assert_eq!(globals[0].mutability, AwwasmGlobalMutability::Immutable);
+        assert_eq!(globals[1].value_type, ParamType::I64);
+        assert_eq!(globals[1].mutability, AwwasmGlobalMutability::Mutable);
+        Ok(())
+    }
+
+    #[test]
+    fn decode_table_section_test() -> anyhow::Result<()> {
+        let module = wat::parse_str(r#"
+            (module
+                (table 10 funcref)
+            )
+        "#)?;
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        module_parsed.resolve_all_sections()?;
+
+        let tables = module_parsed.tables.as_ref().expect("tables should exist");
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].elem_type, AwwasmTableReferenceType::Function);
+        assert_eq!(tables[0].limits.min, 10);
+        assert!(tables[0].limits.max.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn decode_start_section_test() -> anyhow::Result<()> {
+        let module = wat::parse_str(r#"
+            (module
+                (func)
+                (start 0)
+            )
+        "#)?;
+        let mut module_parsed = AwwasmModule::new(&module)?;
+        module_parsed.resolve_all_sections()?;
+
+        assert_eq!(module_parsed.start, Some(AwwasmStartSectionItem { func_idx: 0 }));
+        Ok(())
+    }
+}

@@ -12,8 +12,10 @@ use nom::number::complete::le_u8;
 #[nom(LittleEndian)]
 pub enum ParamType {
     IUnknown = 0x00,
-    I32 = 0x7F,
+    F64 = 0x7C,
+    F32 = 0x7D,
     I64 = 0x7E,
+    I32 = 0x7F,
 }
 
 impl Default for ParamType {
@@ -145,6 +147,14 @@ pub struct AwwasmExportSectionItem<'a> {
     pub index: u32,
 }
 
+// Start section types
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmStartSectionItem {
+    #[nom(Parse = "leb128_u32")]
+    pub func_idx: u32,
+}
+
 // Data section types
 #[derive(Debug, Clone, PartialEq, Eq, Nom)]
 #[nom(LittleEndian)]
@@ -176,3 +186,118 @@ pub struct AwwasmDataSectionItem<'a> {
     pub data_bytes: &'a [u8],
 }
 
+// Global value mutability state
+#[repr(u8)]
+#[derive(Debug, Clone, PartialEq, Eq, FromPrimitive, Nom)]
+#[nom(LittleEndian)]
+pub enum AwwasmGlobalMutability {
+    Immutable = 0x00,
+    Mutable   = 0x01,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmGlobalSectionItem<'a> {
+    pub value_type: ParamType,
+    pub mutability: AwwasmGlobalMutability,
+    pub init_expr: AwwasmDataInitExpr<'a>,
+}
+
+// Table reference type
+#[repr(u8)]
+#[derive(Debug, Clone, PartialEq, Eq, FromPrimitive, Nom)]
+#[nom(LittleEndian)]
+pub enum AwwasmTableReferenceType {
+    Function = 0x70,
+    Extern = 0x6F,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmTableSectionItem {
+    pub elem_type: AwwasmTableReferenceType,
+    pub limits: AwwasmMemoryParams,
+}
+
+// Element section variants
+
+// Element kind byte
+#[repr(u8)]
+#[derive(Debug, Clone, PartialEq, Eq, FromPrimitive, Nom)]
+#[nom(LittleEndian)]
+pub enum AwwasmElemKind {
+    FuncRef = 0x00,
+}
+// Active element segment, implicit table
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmActiveImplicitElemSeg<'a> {
+    pub offset: AwwasmDataInitExpr<'a>,
+    #[nom(Parse = "leb128_u32")]
+    pub func_count: u32,
+    #[nom(Count = "func_count as usize", Parse = "leb128_u32")]
+    pub func_indices: Vec<u32>,
+}
+
+// Passive element segment
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmPassiveElemSeg {
+    pub elemkind: AwwasmElemKind,
+    #[nom(Parse = "leb128_u32")]
+    pub func_count: u32,
+    #[nom(Count = "func_count as usize", Parse = "leb128_u32")]
+    pub func_indices: Vec<u32>,
+}
+
+// Active element segment, explicit table
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmActiveExplicitElemSeg<'a> {
+    #[nom(Parse = "leb128_u32")]
+    pub tableidx: u32,
+    pub offset: AwwasmDataInitExpr<'a>,
+    pub elemkind: AwwasmElemKind,
+    #[nom(Parse = "leb128_u32")]
+    pub func_count: u32,
+    #[nom(Count = "func_count as usize", Parse = "leb128_u32")]
+    pub func_indices: Vec<u32>,
+}
+
+// Declarative element segment
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmDeclarativeElemSeg {
+    pub elemkind: AwwasmElemKind,
+    #[nom(Parse = "leb128_u32")]
+    pub func_count: u32,
+    #[nom(Count = "func_count as usize", Parse = "leb128_u32")]
+    pub func_indices: Vec<u32>,
+}
+
+// Dispatcher enum — selects a payload subtype based on the flags value.
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian, Selector = "u32")]
+pub enum AwwasmElemSegmentBody<'a> {
+    // flags = 0x00: active, implicit table 0
+    #[nom(Selector = "0_u32")]
+    ActiveImplicit(AwwasmActiveImplicitElemSeg<'a>),
+    // flags = 0x01: passive
+    #[nom(Selector = "1_u32")]
+    Passive(AwwasmPassiveElemSeg),
+    // flags = 0x02: active, explicit tableidx
+    #[nom(Selector = "2_u32")]
+    ActiveExplicit(AwwasmActiveExplicitElemSeg<'a>),
+    // flags = 0x03: declarative
+    #[nom(Selector = "3_u32")]
+    Declarative(AwwasmDeclarativeElemSeg),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Nom)]
+#[nom(LittleEndian)]
+pub struct AwwasmElementSectionItem<'a> {
+    #[nom(Parse = "leb128_u32")]
+    pub flags: u32,
+    #[nom(Selector = "flags", Parse = "{ |i| AwwasmElemSegmentBody::parse(i, flags) }")]
+    pub body: AwwasmElemSegmentBody<'a>,
+}
